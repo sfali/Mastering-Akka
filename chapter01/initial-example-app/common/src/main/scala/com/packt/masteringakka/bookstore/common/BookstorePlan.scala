@@ -32,7 +32,7 @@ trait BookstorePlan extends async.Plan with ServerErrorResponse{
      * @param str The string path element to check
      * @return an Option that will be None if not an Int and a Some if an Int
      */
-    def unapply(str:String) = util.Try(str.toInt).toOption
+    def unapply(str:String) = scala.util.Try(str.toInt).toOption
   }
   
   /**
@@ -45,15 +45,15 @@ trait BookstorePlan extends async.Plan with ServerErrorResponse{
     f.onComplete{
       
       //Got a good result that we can respond with as json
-      case util.Success(FullResult(b:AnyRef)) => 
+      case scala.util.Success(FullResult(b:AnyRef)) =>
         resp.respond(asJson(ApiResponse(ApiResonseMeta(Ok.code), Some(b))))
         
       //Got an EmptyResult which will become a 404 with json indicating the not found
-      case util.Success(EmptyResult) =>
+      case scala.util.Success(EmptyResult) =>
         resp.respond(asJson(ApiResponse(ApiResonseMeta(NotFound.code, Some(ErrorMessage("notfound")))), NotFound))  
         
       //Got a Failure.  Will either be a 400 for a validation fail or a 500 for everything else
-      case util.Success(fail:Failure) =>
+      case scala.util.Success(fail:Failure) =>
         val status = fail.failType match{
           case FailureType.Validation => BadRequest
           case _ => InternalServerError
@@ -67,7 +67,7 @@ trait BookstorePlan extends async.Plan with ServerErrorResponse{
         resp.respond(asJson(apiResp, InternalServerError))
              
       //The Future failed, so respond with a 500
-      case util.Failure(ex) => 
+      case scala.util.Failure(ex) =>
         val apiResp = ApiResponse(ApiResonseMeta(InternalServerError.code, Some(ServiceResult.UnexpectedFailure )))
         resp.respond(asJson(apiResp, InternalServerError))     
     }
