@@ -1,12 +1,10 @@
 package com.packt.masteringakka.bookstore.order
 
 import com.packt.masteringakka.bookstore.common.BookstorePlan
-import unfiltered.response.ResponseString
+
 import scala.concurrent.ExecutionContext
-import scala.concurrent.Future
-import unfiltered.response.InternalServerError
-import akka.actor.ActorSystem
 import akka.actor.ActorRef
+import com.packt.masteringakka.bookstore.domain.order._
 import unfiltered.request._
 import unfiltered.request.Seg
 import io.netty.channel.ChannelHandler.Sharable

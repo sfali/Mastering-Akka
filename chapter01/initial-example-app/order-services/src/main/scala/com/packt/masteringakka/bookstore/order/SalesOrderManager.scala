@@ -1,19 +1,24 @@
 package com.packt.masteringakka.bookstore.order
 
 import akka.actor._
+
 import scala.concurrent.ExecutionContext
 import com.packt.masteringakka.bookstore.common._
 import slick.dbio.DBIOAction
+
 import scala.concurrent.Future
 import slick.jdbc.SQLActionBuilder
 import slick.jdbc.GetResult
+
 import concurrent.duration._
 import akka.util.Timeout
 import com.packt.masteringakka.bookstore.domain.user._
 import com.packt.masteringakka.bookstore.domain.book._
 import java.util.Date
+
 import com.packt.masteringakka.bookstore.domain.credit._
 import com.packt.masteringakka.bookstore.domain.credit.CreditCardTransaction
+import com.packt.masteringakka.bookstore.domain.order._
 
 /**
  * Companion to the SalesOrderManager actor

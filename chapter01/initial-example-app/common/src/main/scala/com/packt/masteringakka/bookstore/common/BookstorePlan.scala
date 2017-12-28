@@ -7,11 +7,10 @@ import org.json4s._
 import org.json4s.native.Serialization
 import org.json4s.native.Serialization.{read, write}
 import org.json4s.ext.EnumNameSerializer
-import com.packt.masteringakka.bookstore.domain.credit.CreditTransactionStatus
 import scala.concurrent.Future
 import unfiltered.response._
 import io.netty.handler.codec.http.HttpResponse
-import com.packt.masteringakka.bookstore.order.SalesOrderStatus
+import com.packt.masteringakka.bookstore.domain.order.SalesOrderStatus
 
 /**
  * Base trait for the endpoints in the bookstore app
