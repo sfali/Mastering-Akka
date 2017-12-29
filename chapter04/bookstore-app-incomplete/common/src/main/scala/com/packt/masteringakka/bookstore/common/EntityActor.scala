@@ -10,11 +10,11 @@ import akka.util.Timeout
 import scala.concurrent.ExecutionContext
 import scala.reflect.ClassTag
 
-object EntityActor{
+object EntityActor {
   case object GetFieldsObject
   case object Initialize
-  case object Delete  
-  
+  case object Delete
+
   trait State
   case object Initializing extends State
   case object Initialized extends State
@@ -22,173 +22,173 @@ object EntityActor{
   case object Creating extends State
   case object Persisting extends State
   case object FailedToLoad extends State
-  
+
   trait Data
   case object NoData extends Data
-  case class InitializingData(id:Int) extends Data
-  
-  object NonStateTimeout{
-    def unapply(any:Any) = any match{
+  case class InitializingData(id: Int) extends Data
+
+  object NonStateTimeout {
+    def unapply(any: Any) = any match {
       case FSM.StateTimeout => None
       case _ => Some(any)
     }
-  }  
-  
+  }
+
   type ErrorMapper = PartialFunction[Throwable, Failure]
 }
 
-abstract class EntityActor[FO <: EntityFieldsObject[Int, FO]](idInput:Int) extends BookstoreActor with FSM[EntityActor.State, EntityActor.Data] with Stash{
+abstract class EntityActor[FO <: EntityFieldsObject[Int, FO]](idInput: Int)
+    extends BookstoreActor
+    with FSM[EntityActor.State, EntityActor.Data]
+    with Stash {
   import EntityActor._
   import akka.pattern.pipe
   import concurrent.duration._
   import context.dispatcher
-  
-  case class Loaded(fo:Option[FO])
-  case class MissingData(id:Int, deleted:Option[FO] = None) extends Data
-  case class InitializedData(fo:FO) extends Data
-  case class PersistingData(fo:FO, f:Int => FO, newInstance:Boolean = false) extends Data
-  case class FinishCreate(fo:FO)
-  
-  val repo:EntityRepository[FO]
+
+  case class Loaded(fo: Option[FO])
+  case class MissingData(id: Int, deleted: Option[FO] = None) extends Data
+  case class InitializedData(fo: FO) extends Data
+  case class PersistingData(fo: FO, f: Int => FO, newInstance: Boolean = false) extends Data
+  case class FinishCreate(fo: FO)
+
+  val repo: EntityRepository[FO]
   val entityType = getClass.getSimpleName
-  val errorMapper:ErrorMapper
-  
+  val errorMapper: ErrorMapper
+
   if (idInput == 0) {
     startWith(Creating, NoData)
-  }
-  else {
+  } else {
     startWith(Initializing, InitializingData(idInput))
-    self ! Initialize    
+    self ! Initialize
   }
-  
-  when(Initializing){
-    case Event(Initialize, data:InitializingData) =>
-      log.info("Initializing state data for {} {}", entityType, data.id )
-      repo.loadEntity(data.id).map(fo => Loaded(fo)) pipeTo self      
+
+  when(Initializing) {
+    case Event(Initialize, data: InitializingData) =>
+      log.info("Initializing state data for {} {}", entityType, data.id)
+      repo.loadEntity(data.id).map(fo => Loaded(fo)) pipeTo self
       stay
-      
+
     case Event(Loaded(Some(fo)), _) =>
       unstashAll
       goto(Initialized) using InitializedData(fo)
-      
-    case Event(Loaded(None), data:InitializingData) =>
+
+    case Event(Loaded(None), data: InitializingData) =>
       log.error("No entity of type {} for id {}", entityType, idInput)
       unstashAll
-      goto(Missing) using MissingData(data.id)     
-      
-    case Event(Status.Failure(ex), data:InitializingData) =>
+      goto(Missing) using MissingData(data.id)
+
+    case Event(Status.Failure(ex), data: InitializingData) =>
       log.error(ex, "Error initializing {} {}, stopping", entityType, data.id)
-      goto(FailedToLoad) using data 
-      
-    case Event(NonStateTimeout(other), _) =>    
+      goto(FailedToLoad) using data
+
+    case Event(NonStateTimeout(other), _) =>
       stash
       stay
   }
-  
-  when(Missing, 1 second){
-    case Event(GetFieldsObject, data:MissingData) =>
+
+  when(Missing, 1 second) {
+    case Event(GetFieldsObject, data: MissingData) =>
       val result = data.deleted.map(FullResult.apply).getOrElse(EmptyResult)
       sender ! result
       stay
-      
+
     case Event(NonStateTimeout(other), _) =>
-      sender ! Failure(FailureType.Validation, ErrorMessage.InvalidEntityId )
+      sender ! Failure(FailureType.Validation, ErrorMessage.InvalidEntityId)
       stay
   }
-  
+
   when(Creating)(customCreateHandling orElse standardCreateHandling)
-  
-  def customCreateHandling:StateFunction = PartialFunction.empty
-  
-  def standardCreateHandling:StateFunction = {
-    case Event(fo:FO, _) =>
-      createAndRequestFO(fo) 
-    case Event(FinishCreate(fo:FO), _) =>
+
+  def customCreateHandling: StateFunction = PartialFunction.empty
+
+  def standardCreateHandling: StateFunction = {
+    case Event(fo: FO, _) =>
+      createAndRequestFO(fo)
+    case Event(FinishCreate(fo: FO), _) =>
       createAndRequestFO(fo)
     case Event(Status.Failure(ex), _) =>
       log.error(ex, "Failed to create a new entity of type {}", entityType)
       val fail = mapError(ex)
-      goto(Missing) using MissingData(0) replying(fail)
+      goto(Missing) using MissingData(0) replying (fail)
   }
-  
-  def createAndRequestFO(fo:FO) = {
+
+  def createAndRequestFO(fo: FO) = {
     requestFoForSender
-    persist(fo, repo.persistEntity(fo), id => fo.assignId(id), true)     
+    persist(fo, repo.persistEntity(fo), id => fo.assignId(id), true)
   }
-  
+
   when(Initialized, 60 second)(standardInitializedHandling orElse initializedHandling)
-     
-  def standardInitializedHandling:StateFunction = {
+
+  def standardInitializedHandling: StateFunction = {
     case Event(GetFieldsObject, InitializedData(fo)) =>
       sender ! FullResult(fo)
-      stay  
-      
+      stay
+
     case Event(Delete, InitializedData(fo)) =>
       requestFoForSender
-      persist(fo, repo.deleteEntity(fo.id), _ => fo.markDeleted)      
+      persist(fo, repo.deleteEntity(fo.id), _ => fo.markDeleted)
   }
-  
-  def initializedHandling:StateFunction
-  
-  when(Persisting){
-    case Event(i:Int, PersistingData(fo, f, newInstance)) =>  
+
+  def initializedHandling: StateFunction
+
+  when(Persisting) {
+    case Event(i: Int, PersistingData(fo, f, newInstance)) =>
       val newFo = f(i)
       unstashAll
-      
-      if (newFo.deleted){
+
+      if (newFo.deleted) {
         goto(Missing) using MissingData(newFo.id, Some(newFo))
-      }
-      else{
+      } else {
         if (newInstance) {
           postCreate(newFo)
           setStateTimeout(Initialized, Some(1 second))
         }
         goto(Initialized) using InitializedData(newFo)
-      }      
-            
-    case Event(Status.Failure(ex), data:PersistingData) =>
+      }
+
+    case Event(Status.Failure(ex), data: PersistingData) =>
       log.error(ex, "Failed on an create/update operation to {} {}", entityType, data.fo.id)
       val response = mapError(ex)
-      goto(Initialized) using InitializedData(data.fo) forMax(1 second) replying(response)
-      
-    case Event(NonStateTimeout(other), _) => 
+      goto(Initialized) using InitializedData(data.fo) forMax (1 second) replying (response)
+
+    case Event(NonStateTimeout(other), _) =>
       stash
       stay
   }
-  
-  when(FailedToLoad, 1 second){
+
+  when(FailedToLoad, 1 second) {
     case Event(NonStateTimeout(other), _) =>
-      sender ! Failure(FailureType.Service , ServiceResult.UnexpectedFailure)
-      stay    
+      sender ! Failure(FailureType.Service, ServiceResult.UnexpectedFailure)
+      stay
   }
-  
-  whenUnhandled{
+
+  whenUnhandled {
     case Event(StateTimeout, _) =>
-      log.info("{} entity {} has reached max idle time, stopping instance", getClass.getSimpleName, self.path.name)      
+      log.info("{} entity {} has reached max idle time, stopping instance", getClass.getSimpleName, self.path.name)
       stop
-  }  
-  
-  def persist(fo:FO, f: => Future[Int], 
-    foF:Int => FO, newInstance:Boolean = false) = {
+  }
+
+  def persist(fo: FO, f: => Future[Int], foF: Int => FO, newInstance: Boolean = false) = {
     val daoResult = f
     daoResult.to(self, sender())
-    goto(Persisting) using PersistingData(fo, foF, newInstance)         
-  }  
-  
-  def postCreate(fo:FO){}
-  
-  def mapError(ex:Throwable) = 
-    errorMapper.lift(ex).getOrElse(Failure(FailureType.Service, ServiceResult.UnexpectedFailure ))
-  
-    
-  def requestFoForSender:Unit = requestFoForSender(sender())
-  def requestFoForSender(ref:ActorRef):Unit = self.tell(GetFieldsObject, ref)
+    goto(Persisting) using PersistingData(fo, foF, newInstance)
+  }
+
+  def postCreate(fo: FO) {}
+
+  def mapError(ex: Throwable) =
+    errorMapper.lift(ex).getOrElse(Failure(FailureType.Service, ServiceResult.UnexpectedFailure))
+
+  def requestFoForSender: Unit = requestFoForSender(sender())
+  def requestFoForSender(ref: ActorRef): Unit = self.tell(GetFieldsObject, ref)
 }
 
-abstract class EntityAggregate[FO <: EntityFieldsObject[Int, FO], E <: EntityActor[FO] : ClassTag] extends BookstoreActor{
-  def lookupOrCreateChild(id:Int) = {
+abstract class EntityAggregate[FO <: EntityFieldsObject[Int, FO], E <: EntityActor[FO]: ClassTag]
+    extends BookstoreActor {
+  def lookupOrCreateChild(id: Int) = {
     val name = entityActorName(id)
-    context.child(name).getOrElse{
+    context.child(name).getOrElse {
       log.info("Creating new {} actor to handle a request for id {}", entityName, id)
       if (id > 0)
         context.actorOf(entityProps(id), name)
@@ -196,38 +196,35 @@ abstract class EntityAggregate[FO <: EntityFieldsObject[Int, FO], E <: EntityAct
         context.actorOf(entityProps(id))
     }
   }
-  
-  def persistOperation(id:Int, msg:Any){
+
+  def persistOperation(id: Int, msg: Any) {
     val entity = lookupOrCreateChild(id)
-    entity.forward(msg)    
+    entity.forward(msg)
   }
-  
-  def askForFo(bookActor:ActorRef) = {
+
+  def askForFo(bookActor: ActorRef) = {
     import akka.pattern.ask
     import concurrent.duration._
     implicit val timeout = Timeout(5 seconds)
     (bookActor ? EntityActor.GetFieldsObject).mapTo[ServiceResult[FO]]
-  } 
-  
-  def multiEntityLookup(f: => Future[Vector[Int]])(implicit ex:ExecutionContext) = {
-    for{
+  }
+
+  def multiEntityLookup(f: => Future[Vector[Int]])(implicit ex: ExecutionContext) =
+    for {
       ids <- f
       actors = ids.map(lookupOrCreateChild)
       fos <- Future.traverse(actors)(askForFo)
-    } yield{
+    } yield {
       FullResult(fos.flatMap(_.toOption))
-    }    
-  }  
-  
-  
-  def entityProps(id:Int):Props
-  
+    }
+
+  def entityProps(id: Int): Props
+
   private def entityName = {
     val entityTag = implicitly[ClassTag[E]]
     entityTag.runtimeClass.getSimpleName()
   }
-  private def entityActorName(id:Int) = {    
-    s"${entityName.toLowerCase}-$id"  
-  }
- 
+  private def entityActorName(id: Int) =
+    s"${entityName.toLowerCase}-$id"
+
 }
